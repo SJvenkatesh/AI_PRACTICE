@@ -1,0 +1,16 @@
+#Installing library
+pip install openai
+
+#Installing multiple library
+pip install openai langchain python-dotenv
+
+#Check Installed Libraries
+
+pip list
+
+#Upgrade a Library
+pip install--upgrade openai
+
+#Uninstall
+pip uninstall openai
+

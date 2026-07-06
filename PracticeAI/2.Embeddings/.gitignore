@@ -1,0 +1,4 @@
+.env
+chroma_wise_albert/
+__pycache__/
+*.pyc

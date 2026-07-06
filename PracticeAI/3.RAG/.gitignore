@@ -1,0 +1,4 @@
+.env
+wise_albert_rag/
+__pycache__/
+*.pyc
