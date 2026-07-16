@@ -18,6 +18,263 @@ The full orchestration flow as one LangGraph, wiring together everything from
 Agents are mocked here (they return fixed JSON) so the demo is cheap — only
 classify + narrative call the LLM. Example 4 shows running them in parallel.
 
+
+                User Question
+                      │
+                      ▼
+               classify_node
+                      │
+          (Which agents are needed?)
+                      │
+        ┌─────────────┼─────────────┐
+        ▼             ▼             ▼
+    probing      adoption      prediction
+        │             │             │
+        └─────────────┼─────────────┘
+                      ▼
+                evidence_bus
+                      ▼
+               narrative_node
+                      ▼
+                  hitl_node
+                      │
+             Approved? │ No
+                  Yes  ▼
+                      revise
+                        │
+                        └──────────────► narrative
+
+
+Step 1 — classify_node
+
+This is the intent router.
+
+Input:
+
+Why did activation drop?
+
+Prompt:
+
+Determine which agents are required.
+
+Possible agents:
+
+- probing
+- adoption
+- prediction
+- personal_intel
+
+Return JSON.
+
+Suppose Gemini returns:
+
+{
+  "agents": [
+    "probing",
+    "adoption"
+  ]
+}
+
+Now the planner knows:
+
+Run
+
+probing
+adoption
+
+Skip
+
+prediction
+Step 2 — Agent Nodes
+
+Each node checks
+
+Am I selected?
+
+Suppose
+
+selected = [
+    "probing",
+    "adoption"
+]
+Probing Node
+if "probing" not in selected:
+    return {}
+
+False
+
+So it executes
+
+return {
+    "probing_result": ...
+}
+Adoption Node
+
+Also selected
+
+Returns
+
+{
+    "adoption_result": ...
+}
+Prediction Node
+
+Checks
+
+if "prediction" not in selected:
+
+True
+
+So it returns
+
+{}
+
+Nothing happens.
+
+This is what the sentence means:
+
+run ONLY if the planner chose them (else return {})
+
+The node still exists in the graph, but it doesn't do any work if it wasn't selected.
+
+Step 3 — evidence_bus
+
+Now the state contains
+
+{
+    "probing_result": {...},
+    "adoption_result": {...}
+}
+
+Prediction returned
+
+{}
+
+So nothing is added.
+
+The evidence bus collects everything into one package.
+
+Example
+
+evidence = {
+    "probing": state["probing_result"],
+    "adoption": state["adoption_result"]
+}
+
+Now downstream agents don't need to know where evidence came from.
+
+They simply receive
+
+evidence
+Step 4 — narrative_node
+
+Narrative receives
+
+{
+    "probing": {...},
+    "adoption": {...}
+}
+
+Prompt
+
+Use ONLY this evidence.
+
+Write an executive summary.
+
+Maximum 4 sentences.
+
+Gemini writes
+
+Activation declined 50%.
+
+The August commitment is at risk.
+
+Step 5 — hitl_node
+
+HITL means
+
+Human In The Loop
+
+Suppose this report is going to a customer.
+
+Instead of automatically sending it
+
+LangGraph pauses.
+
+Narrative
+
+↓
+
+Manager Review
+
+Manager says
+
+Looks good.
+
+Approve.
+
+Workflow ends.
+
+Suppose manager says
+
+Sentence 2 is incorrect.
+
+Then
+
+Narrative
+
+↓
+
+Human
+
+↓
+
+Revise
+
+↓
+
+Narrative
+
+This is the loop shown here
+
+             narrative
+
+↓
+
+HITL
+
+↓
+
+Revise
+
+↓
+
+Narrative
+Why have an Evidence Bus?
+
+Without it
+
+Narrative might need
+
+probing_result
+
+adoption_result
+
+prediction_result
+
+...
+
+As you add more agents, this becomes messy.
+
+Instead
+
+Narrative only receives
+
+evidence
+
+which is a single object.
+
+
 Provider: free Gemini (flash-lite). Two LLM calls per run.
 
 Setup:
@@ -46,7 +303,7 @@ classify_intent, plan_agents = intent_router.classify_intent, intent_router.plan
 if not os.getenv("GOOGLE_API_KEY"):
     sys.exit("GOOGLE_API_KEY not set. Put it in ../1.KPI_Narrator/.env")
 
-llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", temperature=0.2)
+llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.2)
 
 
 def _text(content) -> str:
@@ -156,6 +413,8 @@ def main() -> None:
     print("Agents run:", result["agents_to_run"])
     print("Approved (no human needed):", result["approved"])
     print("\nDraft answer:\n", result["draft_answer"])
+    print("\nResult:\n", result)
+    print("\n OrchestratorState:\n", OrchestratorState)
     print(
         "\nOne graph did it all: classify → gather (only chosen agents) → merge →\n"
         "narrate → HITL gate. Change the question to a 'qbr_prep' one and the gate\n"
@@ -165,3 +424,26 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+"""
+output:
+
+venkatesh@venkatesh:~/WiseAlbert/PracticeAI/7.Agent_Orchestration$ ../1.KPI_Narrator/.venv/bin/python 3.langgraph_orchestration.py
+Intents: ['kpi_anomaly']
+Agents run: ['probing', 'prediction']
+Approved (no human needed): True
+
+Draft answer:
+ Activation (D-110) has dropped sharply from 24,000 to 12,000, triggering a 'red' severity alert. Our forecast indicates a further decline to 11,000 over the next 7 days with 0.88 confidence. The root cause for this anomaly is not yet identified in the data. There is no information regarding C-09 available in the current evidence.
+
+Result:
+ {'question': 'Why did activation drop? Is C-09 at risk?', 'persona': 'cs_lead', 'intents': ['kpi_anomaly'], 'agents_to_run': ['probing', 'prediction'], 'probing_result': {'D-110': {'value': 12000, 'prior': 24000, 'severity': 'red'}}, 'adoption_result': {}, 'prediction_result': {'forecast_7d': 11000, 'confidence': 0.88}, 'evidence_package': {'probing': {'D-110': {'value': 12000, 'prior': 24000, 'severity': 'red'}}, 'adoption': {}, 'prediction': {'forecast_7d': 11000, 'confidence': 0.88}, 'intents': ['kpi_anomaly']}, 'draft_answer': "Activation (D-110) has dropped sharply from 24,000 to 12,000, triggering a 'red' severity alert. Our forecast indicates a further decline to 11,000 over the next 7 days with 0.88 confidence. The root cause for this anomaly is not yet identified in the data. There is no information regarding C-09 available in the current evidence.", 'approved': True}
+
+ OrchestratorState:
+ <class '__main__.OrchestratorState'>
+
+One graph did it all: classify → gather (only chosen agents) → merge →
+narrate → HITL gate. Change the question to a 'qbr_prep' one and the gate
+would withhold approval instead.
+
+"""

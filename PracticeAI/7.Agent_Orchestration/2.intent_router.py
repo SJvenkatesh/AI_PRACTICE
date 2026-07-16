@@ -11,6 +11,29 @@ The value: if the intent doesn't need `personal_intel`, we never run it —
 saving cost and latency. This is the "STEP 1 + STEP 2" of the flow (see
 1.orchestration_flow.md).
 
+                User Question
+                      │
+                      ▼
+             Intent Classifier (LLM)
+                      │
+              "What does the user need?"
+                      │
+        ┌─────────────┴─────────────┐
+        │                           │
+        ▼                           ▼
+     Intent                    Agent Plan
+  ["probing",              ["probing",
+   "adoption"]              "adoption"]
+        │
+        ▼
+     Run Selected Agents
+        │
+        ▼
+      Narrative
+        │
+        ▼
+     Final Answer
+
 Provider: free Gemini (flash-lite). One LLM call (the classifier).
 
 Run:
@@ -98,3 +121,15 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+"""
+venkatesh@venkatesh:~/WiseAlbert/PracticeAI/7.Agent_Orchestration$ ../1.KPI_Narrator/.venv/bin/python 2.intent_router.py
+Question: Why did activation drop? Is commitment C-09 at risk?
+Intents: ['kpi_anomaly', 'promise_check']
+Agents to run: ['probing', 'prediction', 'adoption']
+
+The orchestrator will run only these agents. Anything not implied by
+the intent (e.g. personal_intel) is skipped — saving cost and latency.
+
+"""
